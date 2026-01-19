@@ -6,7 +6,7 @@ Version hors Web Store, destinée à des tests internes.
 
 ## Installation (Chrome / Chromium)
 
-* Télécharger le dossier de l’extension (ou l’archive ZIP) ```< > Code/Download ZIP```
+* Télécharger [l’archive ZIP](https://github.com/devloben/favoris_meteo-parapente/archive/refs/heads/main.zip)
 
 * Décompresser le dossier
 
