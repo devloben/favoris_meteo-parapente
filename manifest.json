@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Meteo-Parapente - Backup Favoris",
+  "version": "1.0.0",
+  "description": "Exporte et importe les favoris de meteo-parapente.com.",
+  "action": {
+    "default_title": "Backup Favoris",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icons/icon_mp_32.png",
+      "48": "icons/icon_mp_48.png",
+      "128": "icons/icon_mp_128.png"
+    }
+  },
+  "icons": {
+    "32": "icons/icon_mp_32.png",
+    "48": "icons/icon_mp_48.png",
+    "128": "icons/icon_mp_128.png"
+  },
+  "permissions": ["activeTab", "scripting", "downloads"],
+  "host_permissions": [
+    "https://meteo-parapente.com/*",
+    "https://www.meteo-parapente.com/*"
+  ]
+}

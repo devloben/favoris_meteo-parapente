@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backup Favoris</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Arial;
+        margin: 12px;
+        width: 320px;
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+        margin: 6px 0;
+        cursor: pointer;
+      }
+      .hint {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-top: 8px;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      input[type="file"] {
+        width: 100%;
+        margin: 6px 0;
+      }
+      .danger {
+        color: #b00020;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3 style="margin: 0 0 8px 0">Favoris Météo Parapente</h3>
+    <div>Ce placer sur la page meteo-parapente pour utiliser l'extension.</div>
+
+    <button id="btnExport">⬇️ Exporter (JSON)</button>
+
+    <div style="margin-top: 8px">
+      <input id="fileImport" type="file" accept="application/json" />
+      <label
+        style="display: flex; gap: 8px; align-items: center; margin-top: 8px"
+      >
+        Tri à l’import :
+        <select id="selSortImport">
+          <option value="none">Aucun</option>
+          <option value="az">A → Z</option>
+          <option value="w2e">Ouest → Est</option>
+        </select>
+      </label>
+      <button id="btnImport">⬆️ Importer vers le site</button>
+
+      <div class="danger">
+        ⚠️ L’import remplace les favoris existant par ceux contenus dans le
+        fichier exporté.
+      </div>
+    </div>
+
+    <div class="hint"></div>
+
+    <div id="status" class="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
