@@ -26,3 +26,6 @@ Version hors Web Store, destinée à des tests internes.
 
 * Rendez-vous sur https://meteo-parapente.com 
 * Cliquer sur l'icone Météo Parapente dans la barre des extensions et suivez les instructions.
+
+# Copie écran
+![Sreenshot](/screenshot.png)
