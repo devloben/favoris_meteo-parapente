@@ -1,4 +1,14 @@
-// Exporte et importe les favoris contenu dans le State du Localstoroge
+// ============================================================================
+// Meteo-Parapente - Backup Favoris
+// popup.js
+// - Exporte / importe les favoris stockés dans localStorage (clé "state")
+// - N'exporte / n'importe jamais "auth"
+// - Import : option de tri (A→Z ou Ouest→Est)
+// ============================================================================
+
+// ============================================================================
+// 1) UI (DOM refs + affichage de statut)
+// ============================================================================
 
 const statusEl = document.getElementById("status");
 const btnExport = document.getElementById("btnExport");
@@ -6,19 +16,22 @@ const btnImport = document.getElementById("btnImport");
 const fileImport = document.getElementById("fileImport");
 const selSortImport = document.getElementById("selSortImport");
 
-// Affiche les messages
 function setStatus(html) {
   statusEl.innerHTML = html;
 }
 
-// Règle unique de sécurité : accepter meteo-parapente.com et www.meteo-parapente.com
+// ============================================================================
+// 2) Sécurité & helpers (validation du site, onglet actif, etc.)
+// ============================================================================
+
+// Règle unique : accepter meteo-parapente.com et www.meteo-parapente.com
 function isMeteoParapenteHost(hostname) {
   return (
     typeof hostname === "string" && /\.?meteo-parapente\.com$/.test(hostname)
   );
 }
 
-// Récupère l'url de l'onglet actif
+// Récupère l'onglet actif si c'est bien meteo-parapente.com
 async function getActiveMeteoTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) return null;
@@ -29,41 +42,93 @@ async function getActiveMeteoTab() {
   return tab;
 }
 
-// Attend la fin réelle du téléchargement (complete / interrupted)
-function waitForDownloadEnd(downloadId) {
-  return new Promise((resolve, reject) => {
-    function onChanged(delta) {
-      if (delta.id !== downloadId) return;
-
-      // Terminé
-      if (delta.state?.current === "complete") {
-        chrome.downloads.onChanged.removeListener(onChanged);
-        resolve({ ok: true });
-        return;
-      }
-
-      // Interrompu (annulation, erreur, etc.)
-      if (delta.state?.current === "interrupted") {
-        chrome.downloads.onChanged.removeListener(onChanged);
-
-        chrome.downloads.search({ id: downloadId }, (items) => {
-          const item = items?.[0];
-          const reason = item?.error || "UNKNOWN";
-
-          if (reason === "USER_CANCELED") {
-            resolve({ ok: false, canceled: true, reason });
-          } else {
-            reject(new Error("Download interrupted: " + reason));
-          }
-        });
-      }
-    }
-
-    chrome.downloads.onChanged.addListener(onChanged);
-  });
+// Compte le nombre de favoris dans state (si présent)
+function countFavoritesInStateString(stateStr) {
+  if (typeof stateStr !== "string") return 0;
+  try {
+    const stateObj = JSON.parse(stateStr);
+    return Array.isArray(stateObj?.favorites?.list)
+      ? stateObj.favorites.list.length
+      : 0;
+  } catch {
+    return 0;
+  }
 }
 
-// Export du State du Localstorage en omettant auth
+// Label de tri pour affichage UX
+function formatSortLabel(mode) {
+  if (mode === "az") return "A → Z";
+  if (mode === "w2e") return "Ouest → Est";
+  return "désactivé";
+}
+
+// ============================================================================
+// 3) Tri (purement "data" : prend une string JSON state, renvoie une string)
+// ============================================================================
+
+// Tri A→Z (par name), accent-insensible
+function sortFavoritesInStateString(stateStr, direction = "asc") {
+  if (typeof stateStr !== "string" || stateStr.trim() === "") return stateStr;
+
+  const stateObj = JSON.parse(stateStr);
+  const list = stateObj?.favorites?.list;
+  if (!Array.isArray(list)) return stateStr;
+
+  const collator = new Intl.Collator("fr", { sensitivity: "base" });
+
+  stateObj.favorites.list = [...list].sort((a, b) => {
+    const an = (a?.name ?? "").toString();
+    const bn = (b?.name ?? "").toString();
+    const cmp = collator.compare(an, bn);
+    return direction === "desc" ? -cmp : cmp;
+  });
+
+  return JSON.stringify(stateObj);
+}
+
+// Tri Ouest→Est (par longitude croissante)
+function sortFavoritesWestToEastInStateString(stateStr) {
+  if (typeof stateStr !== "string" || stateStr.trim() === "") return stateStr;
+
+  const stateObj = JSON.parse(stateStr);
+  const list = stateObj?.favorites?.list;
+  if (!Array.isArray(list)) return stateStr;
+
+  stateObj.favorites.list = [...list].sort((a, b) => {
+    const lonA = Number(a?.state?.center?.lon);
+    const lonB = Number(b?.state?.center?.lon);
+
+    const aOk = Number.isFinite(lonA);
+    const bOk = Number.isFinite(lonB);
+
+    // Si un favori n'a pas de lon, on le pousse à la fin
+    if (!aOk && !bOk) return 0;
+    if (!aOk) return 1;
+    if (!bOk) return -1;
+
+    return lonA - lonB; // Ouest -> Est
+  });
+
+  return JSON.stringify(stateObj);
+}
+
+// Applique le tri choisi directement dans payload.localStorage.state (si possible)
+function applyImportSortToPayload(payload, mode) {
+  const stateStr = payload?.localStorage?.state;
+  if (typeof stateStr !== "string") return;
+
+  if (mode === "az") {
+    payload.localStorage.state = sortFavoritesInStateString(stateStr, "asc");
+  } else if (mode === "w2e") {
+    payload.localStorage.state = sortFavoritesWestToEastInStateString(stateStr);
+  }
+}
+
+// ============================================================================
+// 4) Fonctions injectées dans la page (s'exécutent DANS l'onglet du site)
+// ============================================================================
+
+// Export du localStorage en omettant auth (clé "auth" + state.auth)
 function readLocalStorageInPageSanitized() {
   const out = {};
 
@@ -85,27 +150,28 @@ function readLocalStorageInPageSanitized() {
     const k = localStorage.key(i);
     if (!k) continue;
 
-    // 1) Ne jamais exporter la clé auth
+    // Ne jamais exporter la clé auth
     if (k === "auth") continue;
 
     let v = localStorage.getItem(k);
 
-    // 2) Si state => supprimer state.auth
+    // Si state => supprimer state.auth
     if (k === "state") v = sanitizeState(v);
 
     out[k] = v;
   }
 
   return {
-    hostname: location.hostname, // ✅ cohérent
+    hostname: location.hostname,
     exportedAt: new Date().toISOString(),
     kind: "meteo-parapente-localstorage-no-auth",
     localStorage: out,
   };
 }
 
-// Import du State du Localstorage sans auth
-// On conserve auth si existant sur l'appareil avec Merge
+// Import du localStorage sans auth
+// - n'écrit jamais la clé auth
+// - merge state pour ne pas écraser state.auth existant
 function writeLocalStorageInPageSanitized(payload) {
   try {
     if (!payload || typeof payload !== "object") {
@@ -131,7 +197,7 @@ function writeLocalStorageInPageSanitized(payload) {
       // state => MERGE sans toucher à auth existant
       if (k === "state" && typeof v === "string") {
         try {
-          const incoming = JSON.parse(v); // state du fichier (sans auth)
+          const incoming = JSON.parse(v);
           const currentStr = localStorage.getItem("state");
           const current = currentStr ? JSON.parse(currentStr) : {};
 
@@ -170,7 +236,45 @@ function writeLocalStorageInPageSanitized(payload) {
   }
 }
 
-// Export des favoris
+// ============================================================================
+// 5) Téléchargement (Chrome) : attendre succès réel / annulation
+// ============================================================================
+
+function waitForDownloadEnd(downloadId) {
+  return new Promise((resolve, reject) => {
+    function onChanged(delta) {
+      if (delta.id !== downloadId) return;
+
+      if (delta.state?.current === "complete") {
+        chrome.downloads.onChanged.removeListener(onChanged);
+        resolve({ ok: true });
+        return;
+      }
+
+      if (delta.state?.current === "interrupted") {
+        chrome.downloads.onChanged.removeListener(onChanged);
+
+        chrome.downloads.search({ id: downloadId }, (items) => {
+          const item = items?.[0];
+          const reason = item?.error || "UNKNOWN";
+
+          if (reason === "USER_CANCELED") {
+            resolve({ ok: false, canceled: true, reason });
+          } else {
+            reject(new Error("Download interrupted: " + reason));
+          }
+        });
+      }
+    }
+
+    chrome.downloads.onChanged.addListener(onChanged);
+  });
+}
+
+// ============================================================================
+// 6) Workflows (export / import)
+// ============================================================================
+
 async function exportJson() {
   const tab = await getActiveMeteoTab();
   if (!tab) {
@@ -180,7 +284,7 @@ async function exportJson() {
     return;
   }
 
-  setStatus("Lecture du localStorage (sans auth)…");
+  // setStatus("Lecture du localStorage (sans auth)…");
 
   const injected = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -194,6 +298,10 @@ async function exportJson() {
     );
     return;
   }
+
+  const favoritesCount = countFavoritesInStateString(
+    result?.localStorage?.state,
+  );
 
   const jsonStr = JSON.stringify(result, null, 2);
   const ts = result.exportedAt.replace(/[:.]/g, "-");
@@ -211,13 +319,14 @@ async function exportJson() {
 
     const end = await waitForDownloadEnd(downloadId);
 
-    // Annulation utilisateur => rien affiché
     if (!end.ok && end.canceled) {
-      setStatus("");
+      setStatus(""); // annulation => aucun message
       return;
     }
 
-    setStatus(`✅ Export OK <br>Fichier: ${filename}`);
+    setStatus(
+      `✅ Export de ${favoritesCount} favoris réussi<br>Fichier: ${filename}`,
+    );
   } catch (e) {
     setStatus("❌ Téléchargement échoué: " + String(e));
   } finally {
@@ -225,59 +334,11 @@ async function exportJson() {
   }
 }
 
-// Fonction de tri de A à Z à l'import
-function sortFavoritesInStateString(stateStr, direction = "asc") {
-  if (typeof stateStr !== "string" || stateStr.trim() === "") return stateStr;
-
-  const stateObj = JSON.parse(stateStr);
-
-  const list = stateObj?.favorites?.list;
-  if (!Array.isArray(list)) return stateStr;
-
-  const collator = new Intl.Collator("fr", { sensitivity: "base" });
-
-  stateObj.favorites.list = [...list].sort((a, b) => {
-    const an = (a?.name ?? "").toString();
-    const bn = (b?.name ?? "").toString();
-    const cmp = collator.compare(an, bn);
-    return direction === "desc" ? -cmp : cmp;
-  });
-
-  return JSON.stringify(stateObj);
-}
-
-// Fonction de tri d'Ouest en Est à l'import
-function sortFavoritesWestToEastInStateString(stateStr) {
-  if (typeof stateStr !== "string" || stateStr.trim() === "") return stateStr;
-
-  const stateObj = JSON.parse(stateStr);
-  const list = stateObj?.favorites?.list;
-  if (!Array.isArray(list)) return stateStr;
-
-  stateObj.favorites.list = [...list].sort((a, b) => {
-    const lonA = Number(a?.state?.center?.lon);
-    const lonB = Number(b?.state?.center?.lon);
-
-    const aOk = Number.isFinite(lonA);
-    const bOk = Number.isFinite(lonB);
-
-    // Si un favori n'a pas de lon, on le pousse à la fin
-    if (!aOk && !bOk) return 0;
-    if (!aOk) return 1;
-    if (!bOk) return -1;
-
-    return lonA - lonB; // Ouest -> Est
-  });
-
-  return JSON.stringify(stateObj);
-}
-
-// Import des favoris
 async function importJson() {
   const tab = await getActiveMeteoTab();
   if (!tab) {
     setStatus(
-      "❌ Ouvre un onglet sur https://meteo-parapente.com puis réessaie.",
+      `❌ Ouvre un onglet sur <a href="https://meteo-parapente.com" target="_blank" rel="noopener noreferrer">https://meteo-parapente.com</a> puis réessaie.`,
     );
     return;
   }
@@ -288,28 +349,25 @@ async function importJson() {
     return;
   }
 
-  setStatus("Lecture du fichier…");
-
-  const text = await file.text();
+  // setStatus("Lecture du fichier…");
 
   let payload;
   try {
-    payload = JSON.parse(text);
+    payload = JSON.parse(await file.text());
   } catch {
     setStatus("❌ JSON invalide.");
     return;
   }
 
+  // Validations de base
   if (!payload || typeof payload !== "object") {
     setStatus("❌ Fichier invalide.");
     return;
   }
-
   if (!payload.hostname || typeof payload.hostname !== "string") {
     setStatus("❌ Fichier invalide : hostname manquant.");
     return;
   }
-
   if (!isMeteoParapenteHost(payload.hostname)) {
     setStatus(
       `❌ Ce fichier provient de : ${payload.hostname}<br>` +
@@ -317,32 +375,25 @@ async function importJson() {
     );
     return;
   }
-
   if (!payload.localStorage || typeof payload.localStorage !== "object") {
     setStatus("❌ Fichier invalide : champ localStorage manquant.");
     return;
   }
 
-  setStatus("Écriture dans le localStorage (sans auth)…");
-
-  // Tri à l'import
+  // Tri à l'import (optionnel)
   const mode = selSortImport?.value ?? "none";
-
   try {
-    const stateStr = payload?.localStorage?.state;
-    if (typeof stateStr === "string") {
-      if (mode === "az")
-        payload.localStorage.state = sortFavoritesInStateString(
-          stateStr,
-          "asc",
-        );
-      if (mode === "w2e")
-        payload.localStorage.state =
-          sortFavoritesWestToEastInStateString(stateStr);
-    }
+    applyImportSortToPayload(payload, mode);
   } catch {
     // si erreur => import tel quel
   }
+
+  // Comptage (après tri éventuel)
+  const importedFavoritesCount = countFavoritesInStateString(
+    payload?.localStorage?.state,
+  );
+
+  // setStatus("Écriture dans le localStorage (sans auth)…");
 
   const injected = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -351,7 +402,6 @@ async function importJson() {
   });
 
   const result = injected?.[0]?.result;
-
   if (!result?.ok) {
     setStatus(`❌ Import échoué: ${result?.error ?? "Erreur inconnue"}`);
     return;
@@ -359,11 +409,17 @@ async function importJson() {
 
   await chrome.tabs.reload(tab.id);
 
-  const label =
-    mode === "az" ? "A → Z" : mode === "w2e" ? "Ouest → Est" : "désactivé";
+  const label = formatSortLabel(mode);
 
-  setStatus(`✅ Import OK<br>` + `Tri: ${label}<br>`);
+  setStatus(
+    `✅ Import de ${importedFavoritesCount} favoris réussi<br>` +
+      `Tri: ${label}`,
+  );
 }
+
+// ============================================================================
+// 7) Events (click handlers)
+// ============================================================================
 
 btnExport.addEventListener("click", () => {
   exportJson().catch((e) => setStatus("❌ Erreur export: " + String(e)));
